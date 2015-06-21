@@ -1,0 +1,96 @@
+---
+title: "Machine learning project report"
+author: "Billy Harris"
+date: "21/06/2015"
+output: html_document
+---
+
+**Introduction**  
+The aim of this study is to build a model to predict whether an exercise (dumbbell curl) is being carried out using correct technique, based on sensor data. For a brief overview of the original research and discussion of the use of sensors see: http://groupware.les.inf.puc-rio.br/har. A more detailed discussion is available in: Ugulino, W., Cardador, D. *et al.* "Wearable Computing: Accelerometers' Data Classification of Body Postures and Movement" in: *Lecture Notes in Computer Science*, pp. 52-61. Curitiba, PR: Springer Berlin / Heidelberg, 2012.
+
+**Method**  
+The data and necessary libraries were loaded.  
+
+```{r message=FALSE}
+library(caret); library(ggplot2); library(rattle)
+setwd("/home/billy/Documents/CourseraDataScience/MachineLearning/Project/")
+rawdata<-read.csv("pml-training.csv")
+questionset<-read.csv("pml-testing.csv")
+set.seed(864)
+```
+
+The data consist of 19,622 observations, with 160 variables. Of these, the first 7 are contextual information (unique ID, test subject, timestamp etc.) and the 160th variable ("classe") is the variable the model will predict on. Classe is a factor variable with 5 levels:  
+A - correct technique  
+B - throwing the elbows to the front  
+C - lifting the dumbbell only halfway  
+D - lowering the dumbbell only halfway  
+E - throwing the hips to the front  
+
+The "test set" available for download on the Coursera website contained 20 cases for use in a separate exercise, and contained no classe variable. As such, a decision was made to split the "training" data set provided into training and test sets for model building purposes. Factor variables were coerced to numeric, following examination of their values to ensure the appropriateness of this approach.  
+Many of the variables contained large numbers of NA values, which can cause problems with many model building approaches and could result in a model that requires data not available in the testing set. A decision was made to filter the variables included in the model to include only those for which there were no missing values - this decision could always be revisited in the event of no suitable model being found based on the selected variables.  
+
+```{r warning=FALSE}
+for (i in 8:159) {
+    rawdata[[i]]<-as.numeric(as.character(rawdata[[i]]))
+    questionset[[i]]<-as.numeric(as.character(questionset[[i]]))
+} ;rm(i)
+
+inTrain<-createDataPartition(y=rawdata$classe, p=0.8, list=FALSE)
+training<-rawdata[inTrain,]
+testing<-rawdata[-inTrain,]
+
+selectVar<-function() {
+    trainvars<-vector();testvars<-vector();questionvars<-vector()
+    for (i in 8:159) {
+        if (sum(is.na(training[[i]]))==0) {
+            trainvars<-append(x = trainvars,values = i)
+        }
+        if (sum(is.na(testing[[i]]))==0) {
+            testvars<-append(testvars,i)
+        }
+        if (sum(is.na(questionset[[i]]))==0) {
+            questionvars<-append(questionvars,i)
+        }
+    }
+    a<-intersect (trainvars, testvars)
+    intersect(a,questionvars)
+}
+useVars<-selectVar()
+trainData<-training[,c(useVars,160)]
+testData<-testing[,c(useVars,160)]
+```
+
+Models were then constructed using the caret package in R. An approach based on classification trees was chosen because this  does not assume normally distributed data and because the outcome factor variable has five levels (and would not be suitable for, for example, logistic regression).  
+The first attempted model was a simple classification tree using the "rpart" method. This model, which is not reproduced here, was not successful, having an accuracy of 0.49.  
+This approach was rejected and a second model constructed using the "gbm" method. This is a boosted approach, generating multiple classification trees and using a weighted output as the predictor. Cross-validation in this approach is built into model development, with groups of trees built on a resampled subset of the data (in the model below, 25 bootstrap resamples were conducted). 
+
+```{r cache=TRUE, message=FALSE}
+boostFit<-train(classe~.,data=trainData,method="gbm",verbose=FALSE)
+```
+This model had much higher accuracy, and is presented below.
+
+**Results**  
+The boosted model is shown below, with a summary of the most important predictor variables.  
+
+```{r message=FALSE}
+boostFit
+head(varImp(boostFit)$importance,10)
+```
+
+A confusion matrix was generated for both the training and test sets. The test set confusion matrix is reproduced below.  
+
+```{r message=FALSE}
+boostPred<-predict(boostFit,newdata=training)
+testPred<-predict(boostFit,newdata=testing[,1:159])
+```
+
+```{r message=FALSE}
+confusionBoost<-confusionMatrix(boostPred,training$classe)
+confusionTest<-confusionMatrix(data = testPred,reference = testing$classe)
+confusionTest
+```
+
+The confusion matrix shows that the boosted model has an overall accuracy of 0.963 against the test set, for an out of sample error 0.037. For classe = A (correct performance), the model has a sensitivity of 0.98 and a specificity of 0.99.  
+
+**Conclusion**  
+This study concludes that the sensor data provides a suitable basis for building a predictive model (boosted classification tree) capable of detecting good form and errors in form in execution of an exercise (dumbbell curl) with a high degree of accuracy.
